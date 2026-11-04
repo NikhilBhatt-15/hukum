@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hukum</string>
+    <string name="service_label">Hukum voice control</string>
+    <string name="service_description">Lets Hukum open and close apps, scroll, and tap Send in WhatsApp when you ask it to by voice. Hukum only acts on your spoken or typed commands. It does not read or upload your screen.</string>
+</resources>
