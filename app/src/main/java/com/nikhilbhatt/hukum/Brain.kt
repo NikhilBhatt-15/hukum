@@ -69,6 +69,7 @@ object Brain {
     }
 
     fun add(kind: String, text: String) {
+        android.util.Log.i("Hukum", "$kind: $text")
         _log.value = (listOf(LogEntry(fmt.format(Date()), kind, text)) + _log.value).take(40)
     }
 }

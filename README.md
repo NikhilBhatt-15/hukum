@@ -66,6 +66,13 @@ Requires JDK 17+ and the Android SDK (API 35).
 ./gradlew assembleRelease                     # needs keystore.properties, see below
 ```
 
+Debug builds include a test hook so you can drive Hukum from adb. Results appear in logcat under the `Hukum` tag. The hook isn't in release builds.
+
+```bash
+adb shell am broadcast -a com.nikhilbhatt.hukum.COMMAND -p com.nikhilbhatt.hukum --es text "'open settings and scroll down'"
+adb logcat -s Hukum
+```
+
 Release signing reads `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`), which is kept out of git. Without it the release APK is unsigned.
 
 ## Limits

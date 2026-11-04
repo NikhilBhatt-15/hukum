@@ -55,8 +55,10 @@ class HukumService : AccessibilityService() {
         private set
 
     private val launcherPkg by lazy {
+        // Settings ships a fallback HOME activity; it must never count as "the launcher".
         packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
             ?.activityInfo?.packageName
+            ?.takeIf { it != "com.android.settings" && it != "android" }
     }
 
     override fun onServiceConnected() {
@@ -85,6 +87,12 @@ class HukumService : AccessibilityService() {
         }
         lastAppPkg = pkg
     }
+
+    /** The app currently in front, unless that's Hukum, the launcher or System UI. */
+    private fun frontAppPkg(): String? = windows
+        .firstOrNull { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
+        ?.root?.packageName?.toString()
+        ?.takeIf { it != packageName && it != launcherPkg && it != "com.android.systemui" }
 
     private fun currentImePkg(): String? =
         Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)?.substringBefore('/')
@@ -146,12 +154,27 @@ class HukumService : AccessibilityService() {
             if (!accepted && cont.isActive) cont.resume(false)
         }
 
-    /** Goes home and kills the app's background process. Returns the package closed, or null. */
+    /**
+     * Closes an app the way a person would: bring it to the front, open Recents, swipe its card
+     * away, then go home. killBackgroundProcesses alone ignores an app you've only just left.
+     * Returns the package closed, or null if there was nothing to close.
+     */
     suspend fun closeApp(pkg: String?): String? {
-        val target = pkg ?: lastAppPkg ?: return null
+        val target = pkg ?: frontAppPkg() ?: lastAppPkg ?: return null
         if (target == packageName) return null
+        if (rootInActiveWindow?.packageName?.toString() != target) {
+            val launch = packageManager.getLaunchIntentForPackage(target)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ?: return null
+            startActivity(launch)
+            delay(1300)
+        }
+        performGlobalAction(GLOBAL_ACTION_RECENTS)
+        delay(1000)
+        val dm = resources.displayMetrics
+        swipe(dm.widthPixels / 2f, dm.heightPixels * 0.5f, dm.widthPixels / 2f, dm.heightPixels * 0.04f, 180)
+        delay(600)
         performGlobalAction(GLOBAL_ACTION_HOME)
-        delay(700)
+        delay(400)
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).killBackgroundProcesses(target)
         if (target == lastAppPkg) lastAppPkg = null
         return target
