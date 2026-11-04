@@ -9,10 +9,11 @@ enum class Provider(
     val defaultModel: String,
     val keyHint: String,
 ) {
-    GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-flash", "Free key: aistudio.google.com/apikey"),
+    GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-flash-lite-latest", "Free key: aistudio.google.com/apikey"),
     GROQ("Groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "Free key: console.groq.com/keys"),
     OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-oss-120b:free", "Free key: openrouter.ai/keys"),
     CEREBRAS("Cerebras", "https://api.cerebras.ai/v1", "gpt-oss-120b", "Free key: cloud.cerebras.ai"),
+    CLAUDE("Claude", "https://api.anthropic.com/v1", "claude-opus-5-5", "Paid key: platform.claude.com. claude-haiku-5-5 is cheaper and faster."),
     CUSTOM("Custom", "", "", "Any OpenAI-compatible endpoint"),
 }
 

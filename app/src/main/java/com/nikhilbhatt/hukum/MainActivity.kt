@@ -87,6 +87,8 @@ private fun HomeScreen(resumeTick: Int) {
     var permTick by remember { mutableIntStateOf(0) }
     val micOk = remember(resumeTick, permTick) { granted(ctx, Manifest.permission.RECORD_AUDIO) }
     val contactsOk = remember(resumeTick, permTick) { granted(ctx, Manifest.permission.READ_CONTACTS) }
+    val notifOk = remember(resumeTick) { NotifService.isEnabled(ctx) }
+    val pending by Brain.pending.collectAsState()
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permTick++ }
 
     var listening by remember { mutableStateOf(false) }
@@ -97,6 +99,12 @@ private fun HomeScreen(resumeTick: Int) {
             onError = { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() })
     }
     DisposableEffect(Unit) { onDispose { voice.destroy() } }
+    // Toasts from the floating mic need notification permission on Android 13+; ask once.
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !granted(ctx, Manifest.permission.POST_NOTIFICATIONS)) {
+            permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     var command by remember { mutableStateOf("") }
 
@@ -153,6 +161,16 @@ private fun HomeScreen(resumeTick: Int) {
             },
         )
 
+        pending?.let { p ->
+            Section(p.title) {
+                Text(p.text, fontSize = 17.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+                    OutlinedButton(onClick = { Brain.cancel(ctx) }) { Text("Cancel") }
+                    Button(onClick = { Brain.confirm(ctx) }) { Text("Send") }
+                }
+            }
+        }
+
         // ---- setup ----
         Section("Setup") {
             SetupRow("Accessibility service", "Needed to scroll, close apps, tap Send and show the floating mic.", serviceOn) {
@@ -168,6 +186,9 @@ private fun HomeScreen(resumeTick: Int) {
             }
             SetupRow("Microphone", "For voice commands.", micOk) { permLauncher.launch(Manifest.permission.RECORD_AUDIO) }
             SetupRow("Contacts", "To find who to WhatsApp.", contactsOk) { permLauncher.launch(Manifest.permission.READ_CONTACTS) }
+            SetupRow("Notification access", "To read and reply to WhatsApp messages.", notifOk) {
+                ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
         }
 
         // ---- AI ----
@@ -208,7 +229,7 @@ private fun HomeScreen(resumeTick: Int) {
                 testResult = null
                 scope.launch {
                     testResult = try {
-                        val plan = Planner.parse(LlmClient.complete(prefs, Planner.SYSTEM, "open youtube and scroll down twice"))
+                        val plan = Planner.parse(LlmClient.complete(prefs, LlmRequest(Planner.SYSTEM, "open youtube and scroll down twice", json = true)))
                         "Works: ${plan.describe()}"
                     } catch (e: Exception) {
                         "Failed: ${e.message}"
@@ -217,6 +238,10 @@ private fun HomeScreen(resumeTick: Int) {
                 }
             }) { Text(if (testing) "Testing…" else "Test connection") }
             testResult?.let { Text(it, fontSize = 13.sp) }
+            Text("Screenshots (\"look at my screen\") need a model that can see images: Gemini or Claude. " +
+                "gpt-oss is text-only, so with Groq/Cerebras Hukum uses your Gemini or Claude key for screenshots if one is set. " +
+                "Screen contents are only sent when you ask about the screen.",
+                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // ---- options ----
@@ -253,7 +278,11 @@ private fun HomeScreen(resumeTick: Int) {
                 "Close YouTube",
                 "Go home",
                 "Send good morning to Mom on WhatsApp",
-                "WhatsApp Rahul saying I'll be 10 minutes late",
+                "Read my messages",
+                "Reply to Rahul",
+                "Reply to Mom saying on my way",
+                "What's on my screen?",
+                "Look at my screen and describe the photo",
             ).forEach { ex ->
                 Text("“$ex”", Modifier.fillMaxWidth().clickable { command = ex }.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -268,6 +297,7 @@ private fun HomeScreen(resumeTick: Int) {
                         color = when (e.kind) {
                             "Error" -> Color(0xFFFF7B7B)
                             "Done" -> Color(0xFF6EE7A0)
+                            "Ask" -> Color(0xFFE8A317)
                             else -> MaterialTheme.colorScheme.primary
                         })
                     Text(e.text, fontSize = 13.sp)

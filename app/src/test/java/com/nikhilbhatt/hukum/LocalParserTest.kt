@@ -23,6 +23,14 @@ class LocalParserTest {
         assertEquals(listOf(Action.Back, Action.Home), simple("go back then go home"))
     }
 
+    @Test fun messagesLocal() {
+        assertEquals(listOf(Action.ReadMessages(null)), simple("read my messages"))
+        assertEquals(listOf(Action.ReadMessages(null)), simple("check new whatsapp messages"))
+        assertEquals(listOf(Action.ReadMessages("rahul")), simple("read messages from rahul"))
+        assertEquals(listOf(Action.ReadMessages("mom")), simple("what did mom say?"))
+        assertNull(simple("reply to rahul"))
+    }
+
     @Test fun complexGoesToLlm() {
         assertNull(simple("send hi to rahul on whatsapp"))
         assertNull(simple("open whatsapp and message mom"))

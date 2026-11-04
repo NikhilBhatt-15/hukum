@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Hukum</string>
     <string name="service_label">Hukum voice control</string>
-    <string name="service_description">Lets Hukum open and close apps, scroll, and tap Send in WhatsApp when you ask it to by voice. Hukum only acts on your spoken or typed commands. It does not read or upload your screen.</string>
+    <string name="notif_label">Hukum message reader</string>
+    <string name="service_description">Lets Hukum open and close apps, scroll, tap Send in WhatsApp, and read or screenshot the screen when you ask it to by voice. Hukum only acts on your spoken or typed commands. Screen contents go to your chosen AI provider only when you ask about the screen.</string>
 </resources>

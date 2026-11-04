@@ -76,6 +76,91 @@ class HukumService : AccessibilityService() {
                 if (!voice.listening) bubble?.setState(if (busy) Bubble.State.THINKING else Bubble.State.IDLE)
             }
         }
+        scope.launch {
+            Brain.pending.collect { p ->
+                confirmCard?.remove()
+                confirmCard = p?.let { ConfirmCard(this@HukumService, it.title, it.text,
+                    onSend = { Brain.confirm(this@HukumService) },
+                    onCancel = { Brain.cancel(this@HukumService) }) }
+            }
+        }
+    }
+
+    private var confirmCard: ConfirmCard? = null
+
+    /** Start listening, e.g. right after Hukum asks "Send it?". */
+    fun listen() {
+        if (::voice.isInitialized && !voice.listening) voice.start(Prefs(this).speechLang)
+    }
+
+    // ---- reading the screen ----
+
+    private fun activeAppRoot(): AccessibilityNodeInfo? = windows
+        .firstOrNull { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
+        ?.root ?: rootInActiveWindow
+
+    fun frontPkg(): String? = activeAppRoot()?.packageName?.toString()
+
+    /** All visible text on the current screen, top to bottom, de-duplicated. */
+    fun screenText(maxChars: Int = 6000): String {
+        val root = activeAppRoot() ?: return ""
+        val sb = StringBuilder()
+        val seen = HashSet<String>()
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 60 || sb.length > maxChars) return
+            val t = (n.text ?: n.contentDescription)?.toString()?.trim()
+            if (!t.isNullOrEmpty() && seen.add(t)) sb.append(t).append('\n')
+            for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+        }
+        walk(root, 0)
+        return sb.toString().take(maxChars)
+    }
+
+    /** Screenshot of the current screen (without Hukum's own overlays) as a downscaled JPEG. */
+    suspend fun screenshotJpeg(): ByteArray {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            throw java.io.IOException("Screenshots need Android 11 or newer.")
+        }
+        bubble?.setHidden(true)
+        confirmCard?.setHidden(true)
+        try {
+            delay(250)
+            val bmp = suspendCancellableCoroutine { cont ->
+                takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+                    override fun onSuccess(r: ScreenshotResult) {
+                        val hw = android.graphics.Bitmap.wrapHardwareBuffer(r.hardwareBuffer, r.colorSpace)
+                        val soft = hw?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                        hw?.recycle()
+                        r.hardwareBuffer.close()
+                        if (cont.isActive) {
+                            if (soft != null) cont.resume(soft)
+                            else cont.resumeWith(Result.failure(java.io.IOException("Couldn't read the screenshot.")))
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        val msg = when (errorCode) {
+                            ERROR_TAKE_SCREENSHOT_SECURE_WINDOW -> "This screen is protected, so it can't be captured (banking and private apps block screenshots)."
+                            ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "Too many screenshots at once, try again."
+                            else -> "Couldn't take a screenshot (error $errorCode)."
+                        }
+                        if (cont.isActive) cont.resumeWith(Result.failure(java.io.IOException(msg)))
+                    }
+                })
+            }
+            return kotlinx.coroutines.withContext(Dispatchers.Default) {
+                val scale = minOf(1f, 1280f / maxOf(bmp.width, bmp.height))
+                val small = if (scale < 1f)
+                    android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true)
+                else bmp
+                java.io.ByteArrayOutputStream().also {
+                    small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, it)
+                }.toByteArray()
+            }
+        } finally {
+            bubble?.setHidden(false)
+            confirmCard?.setHidden(false)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -104,6 +189,8 @@ class HukumService : AccessibilityService() {
         _running.value = false
         bubble?.remove()
         bubble = null
+        confirmCard?.remove()
+        confirmCard = null
         if (::voice.isInitialized) voice.destroy()
         scope.cancel()
         super.onDestroy()
@@ -285,6 +372,81 @@ class Bubble(
     }
 
     fun setState(s: State) = bg.setColor(s.color)
+
+    fun setHidden(hidden: Boolean) {
+        view.visibility = if (hidden) android.view.View.INVISIBLE else android.view.View.VISIBLE
+    }
+
+    fun remove() = runCatching { wm.removeView(view) }
+}
+
+/** Floating "Send this?" card shown over any app while a drafted message waits for approval. */
+class ConfirmCard(
+    private val svc: AccessibilityService,
+    title: String,
+    text: String,
+    onSend: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    private val wm = svc.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
+    private val d = svc.resources.displayMetrics.density
+    private fun px(v: Int) = (v * d).toInt()
+
+    private fun button(label: String, filled: Boolean, onClick: () -> Unit) = android.widget.TextView(svc).apply {
+        this.text = label
+        textSize = 16f
+        setTextColor(Color.WHITE)
+        gravity = Gravity.CENTER
+        setPadding(px(18), px(10), px(18), px(10))
+        background = GradientDrawable().apply {
+            cornerRadius = 20 * d
+            if (filled) setColor(State.SEND) else setStroke(px(1), Color.parseColor("#66FFFFFF"))
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private object State { val SEND = Color.parseColor("#5B4BDB") }
+
+    private val view = android.widget.LinearLayout(svc).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding(px(18), px(16), px(18), px(14))
+        background = GradientDrawable().apply { cornerRadius = 18 * d; setColor(Color.parseColor("#F21B1E27")) }
+        elevation = 10 * d
+        addView(android.widget.TextView(svc).apply {
+            this.text = title
+            textSize = 13f
+            setTextColor(Color.parseColor("#B3FFFFFF"))
+        })
+        addView(android.widget.TextView(svc).apply {
+            this.text = text
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            setPadding(0, px(6), 0, px(12))
+        })
+        addView(android.widget.LinearLayout(svc).apply {
+            gravity = Gravity.END
+            addView(button("Cancel", false, onCancel))
+            addView(android.widget.Space(svc), android.widget.LinearLayout.LayoutParams(px(10), 1))
+            addView(button("Send", true, onSend))
+        })
+    }
+
+    init {
+        val params = WindowManager.LayoutParams(
+            svc.resources.displayMetrics.widthPixels - px(32), WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = px(96)
+        }
+        wm.addView(view, params)
+    }
+
+    fun setHidden(hidden: Boolean) {
+        view.visibility = if (hidden) android.view.View.INVISIBLE else android.view.View.VISIBLE
+    }
 
     fun remove() = runCatching { wm.removeView(view) }
 }
